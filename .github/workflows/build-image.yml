@@ -1,0 +1,58 @@
+name: Build and Publish Stable Autopush
+
+on:
+  schedule:
+    - cron: '0 2 * * 0' 
+  workflow_dispatch:
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - crate: autoconnect
+            binary: autoconnect
+          - crate: autoendpoint
+            binary: autoendpoint
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout Mozilla upstream repository
+        uses: actions/checkout@v4
+        with:
+          repository: mozilla-services/autopush-rs
+          fetch-depth: 0 
+
+      - name: Switch to latest stable tag
+        id: get_tag
+        run: |
+          # Query GitHub's API for the absolute latest stable release (ignores pre-releases)
+          LATEST_TAG=$(curl -sL https://api.github.com/repos/mozilla-services/autopush-rs/releases/latest | jq -r .tag_name)
+          
+          git checkout $LATEST_TAG
+          echo "Building stable release: $LATEST_TAG"
+          echo "tag=$LATEST_TAG" >> $GITHUB_OUTPUT
+
+      - name: Log in to the Container registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          # Tags the image with both "latest" and the specific version number (e.g. "1.85.0")
+          tags: |
+            ghcr.io/k-zawis/autopush-${{ matrix.binary }}:latest
+            ghcr.io/k-zawis/autopush-${{ matrix.binary }}:${{ steps.get_tag.outputs.tag }}
+          build-args: |
+            BUILD_ARGS=--no-default-features --features redis
+            CRATE=${{ matrix.crate }}
+            BINARY=${{ matrix.binary }}
